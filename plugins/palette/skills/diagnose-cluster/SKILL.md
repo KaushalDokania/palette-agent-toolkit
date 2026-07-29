@@ -70,13 +70,15 @@ K4. **Protocol A — infra/IaaS clusters** (VERIFIED LIVE — CAPI resources are
    kubectl get pods -A --field-selector=status.phase!=Running       # esp. kube-system, CNI, CAPI controllers
    ```
 
-   **Protocol B — EKS/AKS managed pools**
+   **Protocol B — EKS/AKS managed pools** — run ONLY the block matching `cloud_type`; the other provider's CRDs are not installed and will error (`the server doesn't have a resource type ...`).
    ```
    kubectl get spc -A
    kubectl get machinepool -A -o wide
-   kubectl get awsmanagedcontrolplane,awsmanagedmachinepool -A       # CAPA (EKS)
+   # cloud_type=eks (CAPA):
+   kubectl get awsmanagedcontrolplane,awsmanagedmachinepool -A
    kubectl describe awsmanagedcontrolplane,awsmanagedmachinepool -A
-   kubectl get azuremanagedcontrolplane,azuremanagedmachinepool -A   # CAPZ (AKS)
+   # cloud_type=aks (CAPZ):
+   kubectl get azuremanagedcontrolplane,azuremanagedmachinepool -A
    kubectl describe azuremanagedcontrolplane,azuremanagedmachinepool -A
    # plus node/pod health as in Protocol A
    ```
