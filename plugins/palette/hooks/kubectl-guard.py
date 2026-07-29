@@ -434,6 +434,13 @@ def classify_remote_part(tokens):
     write-catalog match."""
     if not tokens:
         return "unknown"
+    # The diagnose-cluster node-log step runs its remote commands under
+    # sudo (root needed to read those logs) -- strip it (and any other
+    # wrapper: timeout/nice/nohup/stdbuf/env) so `sudo cat ...` classifies
+    # on `cat`, not on the literal word "sudo".
+    tokens = tokens[_skip_env_and_wrappers(tokens):]
+    if not tokens:
+        return "unknown"
     if tokens == ["cloud-init"]:
         return "safe"  # bare invocation just prints usage, no side effect
     if tokens[0] in SENSITIVE_READ_CMDS and any(_is_sensitive_path(t) for t in tokens[1:]):
@@ -478,7 +485,10 @@ def _skip_env_and_wrappers(tokens):
         wrapper = tokens[i]
         i += 1
         while i < n and tokens[i].startswith("-"):
-            i += 1  # skip the wrapper's own flags, best-effort
+            flag = tokens[i]
+            i += 1
+            if wrapper == "sudo" and flag in ("-u", "-g") and i < n:
+                i += 1  # skip the flag's value (sudo -u user, sudo -g group)
         if wrapper == "timeout" and i < n and not tokens[i].startswith("-"):
             i += 1  # skip `timeout`'s bare DURATION positional argument
     return i
@@ -668,6 +678,15 @@ def self_test():
         ('ssh h "cat ~/.ssh/id_rsa"', "deny"),
         ('ssh h "cat /etc/kubernetes/admin.conf"', "deny"),
         ('ssh h "cat /var/log/cloud-init-output.log"', "allow"),
+        # sudo-wrapped remote commands (PAI-412 follow-up: node-log step
+        # runs everything under sudo to read root-owned logs)
+        ('ssh h "sudo cat /var/log/cloud-init-output.log"', "allow"),
+        ('ssh h "sudo journalctl -u kubelet --no-pager"', "allow"),
+        ('ssh h "sudo cloud-init status --long"', "allow"),
+        ('ssh h "sudo rm -rf /var"', "deny"),
+        ('ssh h "sudo cat /etc/shadow"', "deny"),
+        ('ssh h "sudo -u ubuntu cat /var/log/cloud-init-output.log"', "allow"),
+        ('ssh h "sudo -E cat /var/log/cloud-init-output.log"', "allow"),
     ]
     failures = []
     for cmd, expected in cases:
