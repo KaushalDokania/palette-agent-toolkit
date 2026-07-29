@@ -15,13 +15,16 @@ COMMAND in an `ssh [opts] [user@]host <remote-command>` invocation (skipping
 ssh's own options/values and the destination), classifies that remote
 command -- including compound `a && b` / `a | b` / `a; b` command lines --
 against a read/write prefix catalog (PAI-412), and denies anything that
-isn't confidently read-only.
+isn't confidently read-only. A read-only verb (cat/grep/tail/...) targeting
+a credential path (/etc/shadow, SSH keys, kube PKI, cloud creds, ...) is
+still denied -- same precedence idea as kubectl's `get secret` block below.
 
 Any command this script can't confidently classify is left alone (no
 stdout) so it falls through to the normal permission flow (settings.json
 rules, then a prompt) -- this hook only ever *adds* denies/allows, it never
 weakens what's already configured.
 """
+import fnmatch
 import json
 import shlex
 import sys
@@ -66,6 +69,42 @@ SSH_VALUE_FLAGS = {
 # the remote command -- not read-only under any classification, same spirit
 # as kubectl's port-forward/proxy verbs above.
 SSH_TUNNEL_FLAGS = {"-L", "-R", "-D", "-w"}
+
+# File-reading commands whose arguments are worth checking against
+# SENSITIVE_PATH_PATTERNS below. These are all in the read-only catalog
+# (safe by verb), but "safe verb" doesn't mean "safe path" -- same idea as
+# kubectl's `get secret` special-case (mentions_secret) above: the verb is
+# read-only, the *target* is a credential, so the read itself is denied.
+SENSITIVE_READ_CMDS = {
+    "cat", "grep", "tail", "head", "less", "more", "od", "xxd",
+    "hexdump", "base64", "strings", "awk", "sed", "cut", "sort",
+    "uniq", "tr", "tac", "nl", "wc",
+}
+
+# Credential/secret paths a file-read must never be allowed to touch over
+# ssh, even though the command itself (cat, grep, ...) is otherwise
+# read-only. Glob (contains "*") matched with fnmatch; anything else is a
+# plain case-insensitive substring match. Prefer over-blocking.
+SENSITIVE_PATH_PATTERNS = [
+    "/etc/shadow", "/etc/gshadow", "/etc/sudoers",
+    "*id_rsa", "*id_ed25519", "*.key", "*.pem", "*/.ssh/*",
+    "/etc/kubernetes/pki*", "/etc/kubernetes/*.conf",
+    "/var/lib/kubelet/pki*", "*kubeconfig*",
+    "*/.aws/*", "*/.azure/*", "*/.config/gcloud/*",
+    "/var/lib/cloud/*cred*",
+]
+
+
+def _is_sensitive_path(token: str) -> bool:
+    t = token.lower()
+    for pattern in SENSITIVE_PATH_PATTERNS:
+        p = pattern.lower()
+        if "*" in p:
+            if fnmatch.fnmatch(t, p):
+                return True
+        elif p in t:
+            return True
+    return False
 
 # Wrapper commands that just run their argument as the real command, same
 # spirit as Claude Code's own Bash-matcher wrapper stripping.
@@ -389,12 +428,16 @@ def _matches(entry, tokens):
 
 def classify_remote_part(tokens):
     """Classify one (already compound-split) piece of an ssh remote
-    command: 'write', 'safe', or 'unknown'. Write is checked first so an
-    entry that (incorrectly) matched both catalogs still fails safe."""
+    command: 'sensitive', 'write', 'safe', or 'unknown'. Sensitive-path and
+    write are checked before safe so a command that's otherwise a safe verb
+    (e.g. `cat`) still fails safe when its target is a credential path or a
+    write-catalog match."""
     if not tokens:
         return "unknown"
     if tokens == ["cloud-init"]:
         return "safe"  # bare invocation just prints usage, no side effect
+    if tokens[0] in SENSITIVE_READ_CMDS and any(_is_sensitive_path(t) for t in tokens[1:]):
+        return "sensitive"
     if any(_matches(e, tokens) for e in WRITE_REMOTE_ENTRIES):
         return "write"
     if any(_matches(e, tokens) for e in SAFE_REMOTE_ENTRIES):
@@ -533,6 +576,8 @@ def classify_ssh(tokens):
     if not remote_subs:
         return "deny", "ssh remote command could not be parsed"
     kinds = [classify_remote_part(s) for s in remote_subs]
+    if any(k == "sensitive" for k in kinds):
+        return "deny", "ssh remote command reads a sensitive/credential path"
     if any(k == "write" for k in kinds):
         return "deny", "ssh remote command includes a mutating/write action"
     if all(k == "safe" for k in kinds):
@@ -614,10 +659,15 @@ def self_test():
         ("ssh user@host cloud-init clean", None),
         ("ssh -L 8080:localhost:80 user@host cat /etc/hosts", "deny"),
         ("ssh user@host", "deny"),
-        ("ssh user@host 'cat /etc/shadow'", "allow"),
+        ("ssh user@host 'cat /etc/shadow'", "deny"),
         ('ssh h "cat /var/log/x; mkdir /tmp/y"', "deny"),
         ("ssh h 'cat a | grep b'", "allow"),
         ("ssh -o StrictHostKeyChecking=no user@host uname -a", "allow"),
+        # sensitive-path denylist (PAI-412 follow-up)
+        ('ssh h "cat /etc/shadow"', "deny"),
+        ('ssh h "cat ~/.ssh/id_rsa"', "deny"),
+        ('ssh h "cat /etc/kubernetes/admin.conf"', "deny"),
+        ('ssh h "cat /var/log/cloud-init-output.log"', "allow"),
     ]
     failures = []
     for cmd, expected in cases:
