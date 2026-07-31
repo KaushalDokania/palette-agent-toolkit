@@ -115,4 +115,7 @@ matching, so it would hold even when every layer in this file is bypassed
 or simply never enabled — but that credential isn't in use yet (see
 above). Until it lands, treat kube-tier `kubectl` access as running with
 admin privileges and no automatic guardrail; the settings template above
-is the only thing you can opt into today.
+is the only thing you can opt into today. Given all that, don't try to
+compensate by running this skill in an auto-approve/YOLO mode — see
+[Running generated commands safely](../../README.md#running-generated-commands-safely)
+in the plugin README.

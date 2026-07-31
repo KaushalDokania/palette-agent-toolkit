@@ -38,3 +38,8 @@ here too: this is defense-in-depth, not a substitute for a scoped
 credential — and the read-only kubeconfig that's meant to be that
 credential isn't wired up yet, so today there's genuinely nothing
 enforcing this below the settings template above, if you've opted into it.
+
+Given that, review and approve every proposed `kubectl`/`ssh` command
+yourself — don't run this skill with an auto-approve/YOLO mode enabled. See
+[Running generated commands safely](https://github.com/spectrocloud/palette-agent-toolkit/blob/main/plugins/palette/README.md#running-generated-commands-safely)
+in the plugin README.

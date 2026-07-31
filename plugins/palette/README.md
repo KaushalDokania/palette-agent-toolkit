@@ -111,6 +111,23 @@ only takes effect if you merge it into your own `.claude/settings.json`. See
 [KUBECTL_GUARDRAILS.md](skills/diagnose-cluster/KUBECTL_GUARDRAILS.md) for
 the full policy and its honest limitations.
 
+## Running generated commands safely
+
+`diagnose-cluster` proposes `kubectl` and `ssh` commands — it doesn't run
+them silently. Review and approve each one yourself before it executes.
+
+**Don't run this skill with an auto-approve-everything ("YOLO") mode
+enabled** — Claude Code's `--dangerously-skip-permissions` flag, or a
+project `permissions` config that auto-allows everything. The `PreToolUse`
+hook that used to auto-block dangerous `kubectl`/`ssh` commands has been
+removed (see [KUBECTL_GUARDRAILS.md](skills/diagnose-cluster/KUBECTL_GUARDRAILS.md)),
+so there is currently no automatic backstop of any kind. Your review of
+each proposed command, before it runs, is the only thing standing between a
+mistaken command and a real cluster.
+
+See [Configure permissions](https://code.claude.com/docs/en/permissions)
+for how Claude Code's approval flow and `/permissions` command work.
+
 ## Test
 
 After installing, verify the plugin loaded and the MCP server connected:
