@@ -59,7 +59,7 @@ K1. **Preflight**
    - If the probe fails, report that the cluster API is unreachable from here (likely a private/edge cluster without the `spectro-proxy` pack), fall back to the Tier-0 findings from step 6, and stop — do not proceed to K2.
 
 K2. **No automatic enforcement — read-only by convention only**
-   - There is no pre-execution hook or any other automatic backstop blocking mutating or secret-reading `kubectl` calls. The intended safety boundary is a **read-only kubeconfig** for the target cluster instead of the admin one — that's not wired up yet (see K1's TODO above, a separate pending task). Today this tier runs on the **admin** kubeconfig with no automatic enforcement at all.
+   - There is no pre-execution hook or any other automatic backstop blocking mutating or secret-reading `kubectl` calls. The intended safety boundary is a **read-only kubeconfig** for the target cluster instead of the admin one — that's not wired up yet. Today this tier runs on the **admin** kubeconfig with no automatic enforcement at all.
    - See [`KUBECTL_GUARDRAILS.md`](./KUBECTL_GUARDRAILS.md) for the full picture, including the optional (opt-in, not auto-applied) permission-template layer.
    - The commands in K4 must still be *chosen* to be read-only by convention/discipline before running them — there's no backstop catching a mistake.
 
@@ -67,7 +67,7 @@ K3. **Route on managed vs. self-managed control plane** (`cloud_type` captured i
    - Managed node pools — `eks`, `aks`, **`gke`** → **Protocol B**.
    - Infra / self-managed control plane — `aws`, `azure`, `gcp` **as IaaS** → **Protocol A**. This includes plain `gcp` as a cloud_type: a bare `gcp` cluster (no managed designation) is GCP IaaS and routes to Protocol A. Only `gke` specifically is the managed offering and routes to Protocol B — don't conflate the two.
 
-Before running K4's commands for Protocol A, check whether the failure is **pre-pivot** or **post-pivot**: if the first control-plane node never came up, the cluster's CAPI resources still live in the **management-plane/PCG kubeconfig**, not the workload cluster's — K4 run against the workload kubeconfig will look empty. Once the first control-plane node is up, CAPI resources have pivoted into the **workload cluster's own** kubeconfig — the normal case this skill already assumes. If K4's commands return "no resources found" unexpectedly, that's often a sign of pointing at the wrong kubeconfig for the failure phase, not proof the cluster has no CAPI objects at all.
+**Pivot check (before K4):** for Protocol A, check whether the failure is **pre-pivot** or **post-pivot** before running K4's commands: if the first control-plane node never came up, the cluster's CAPI resources still live in the **management-plane/PCG kubeconfig**, not the workload cluster's — K4 run against the workload kubeconfig will look empty. Once the first control-plane node is up, CAPI resources have pivoted into the **workload cluster's own** kubeconfig — the normal case this skill already assumes. If K4's commands return "no resources found" unexpectedly, that's often a sign of pointing at the wrong kubeconfig for the failure phase, not proof the cluster has no CAPI objects at all.
 
 K4. **Protocol A — infra/IaaS clusters** (VERIFIED LIVE — CAPI resources are namespaced under `cluster-<uid>`, so use `-A` to see them regardless of exact namespace)
    ```
