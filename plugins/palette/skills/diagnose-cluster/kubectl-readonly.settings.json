@@ -1,5 +1,5 @@
 {
-  "$comment": "Optional, opt-in permission template for the diagnose-cluster skill's kubectl access. There is no hook or other mechanism that applies this automatically — merge the 'permissions' block below into your own .claude/settings.json (project-scoped, shared with your team) or ~/.claude/settings.json (personal) to have Claude Code's permission system enforce this allow/deny list. If you don't merge it, there is no enforcement at this layer. See KUBECTL_GUARDRAILS.md in this directory for what this covers, its limitations, and the read-only kubeconfig that's the actual safety boundary.",
+  "$comment": "Optional, opt-in permission template for the diagnose-cluster skill's kubectl access. There is no hook or other mechanism that applies this automatically — merge the 'permissions' block below into your own .claude/settings.json (project-scoped, shared with your team) or ~/.claude/settings.json (personal) to have Claude Code's permission system enforce this allow/deny list. If you don't merge it, there is no enforcement at this layer. See KUBECTL_GUARDRAILS.md in this directory for what this covers, its limitations, and the read-only kubeconfig that's the intended safety boundary — not yet wired up; today this tier uses the admin kubeconfig with no automatic enforcement.",
   "permissions": {
     "allow": [
       "Bash(kubectl get*)",
