@@ -111,7 +111,7 @@ K5. **Synthesise + wipe**
 
 K6. **Node-level triage (Protocol A only, SSH)**
 
-   Reached when K4/K5 findings point at a node or bootstrap problem: node `NotReady`, `BootstrapReady=False`, or a machine stuck with `InfrastructureReady=True` but never progressing to `Ready`. Not applicable to Protocol B (managed EKS/AKS) — those nodes aren't SSH-reachable/owned the same way.
+   Reached when K4/K5 findings point at a node or bootstrap problem: node `NotReady`, `BootstrapReady=False`, or a machine stuck with `InfrastructureReady=True` but never progressing to `Ready`. Not applicable to Protocol B (managed EKS/AKS/GKE) — those nodes aren't SSH-reachable/owned the same way.
 
    - **How cloud-init works (brief):** on first boot, a node runs cloud-init, which executes the Palette/kubeadm bootstrap — installs the kubelet + container runtime, then joins the cluster. A node that provisioned (`InfrastructureReady=True`) but never went `Ready` usually failed somewhere in that sequence: cloud-init itself, or the kubelet/containerd startup that follows it. That's exactly what the logs below show.
    - **Ask the user for the SSH key.** This step needs the path to the node's SSH private key (e.g. `~/.ssh/id_rsa`). Ask for the **path** — never ask the user to paste the key content into chat, and never read the key file yourself. If they don't have it or decline, stop the node step here and report the K4/K5 kube-level findings only.
