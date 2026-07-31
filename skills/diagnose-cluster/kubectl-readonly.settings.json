@@ -1,5 +1,5 @@
 {
-  "$comment": "Read-only kubectl guardrail for the diagnose-cluster skill. Merge the 'permissions' block below into your own .claude/settings.json (project-scoped, shared with your team) or ~/.claude/settings.json (personal). See KUBECTL_GUARDRAILS.md in this directory for what this enforces and its limitations. Enforced by Claude Code's permission system, not by trusting the model.",
+  "$comment": "Optional, opt-in permission template for the diagnose-cluster skill's kubectl access. There is no hook or other mechanism that applies this automatically — merge the 'permissions' block below into your own .claude/settings.json (project-scoped, shared with your team) or ~/.claude/settings.json (personal) to have Claude Code's permission system enforce this allow/deny list. If you don't merge it, there is no enforcement at this layer. See KUBECTL_GUARDRAILS.md in this directory for what this covers, its limitations, and the read-only kubeconfig that's the actual safety boundary.",
   "permissions": {
     "allow": [
       "Bash(kubectl get*)",

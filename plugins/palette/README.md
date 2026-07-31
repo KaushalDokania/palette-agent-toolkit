@@ -102,11 +102,11 @@ Run `/reload-plugins` after installing to activate it in your current session.
 | `access-review` | `/palette:access-review [name]` | Who's on which team, who's pending activation, any orphaned accounts |
 
 `diagnose-cluster` can additionally run read-only `kubectl` against a
-customer cluster. That's restricted to read-only verbs (and secrets are
-denied outright) by a `PreToolUse` hook (`hooks/kubectl-guard.py`) that
-ships with this plugin and auto-enforces the moment it's installed — no
-opt-in step. A `kubectl-readonly.settings.json` permission template is also
-included as a secondary, config-based fallback. See
+customer cluster. The real safety boundary there is a read-only kubeconfig
+fetched on-demand for that tier — not the admin kubeconfig, and not
+anything this plugin auto-installs. An optional, opt-in
+`kubectl-readonly.settings.json` permission template is also included; it
+only takes effect if you merge it into your own `.claude/settings.json`. See
 [KUBECTL_GUARDRAILS.md](skills/diagnose-cluster/KUBECTL_GUARDRAILS.md) for
 the full policy and its honest limitations.
 
