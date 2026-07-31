@@ -19,15 +19,20 @@ tool name, not on which skill is active — it fired on *every* `Bash` call in
 repo that automatically inspects or blocks `kubectl` commands before they
 run.
 
-## The real safety boundary: a read-only kubeconfig
+## The intended safety boundary: a read-only kubeconfig (not yet wired up)
 
-Once triage escalates past the management-plane tier to the kube-API tier,
-the skill fetches a **read-only kubeconfig** for the target cluster — not
-the admin kubeconfig. See [`SKILL.md`](./SKILL.md) (step K1) for how that
-fetch works. Because the credential itself is scoped read-only at the
-cluster's RBAC layer, a command that slips past every guardrail below still
-can't mutate the cluster or read Secrets — the kubeconfig won't permit it.
-That's what actually limits blast radius here, not anything in this file.
+The plan is for kube-tier triage to fetch a **read-only kubeconfig** for the
+target cluster instead of the admin one, so that even a command that slips
+past every guardrail below still can't mutate the cluster or read
+Secrets — the credential itself wouldn't permit it. That work is in
+progress; see [`SKILL.md`](./SKILL.md)'s K1 step, which is being rewritten
+separately to fetch and use it.
+
+**Until that lands, be aware kube-tier triage currently uses the admin
+kubeconfig, with no automatic enforcement at that layer at all** — the
+only thing standing between a stray command and the cluster right now is
+whatever's below in this file, which (see "Honest limitation") is not a
+real substitute for a scoped credential.
 
 ## Optional layer: `kubectl-readonly.settings.json`
 
@@ -103,8 +108,11 @@ guardrail can still be evaded or produce a false sense of safety:
 None of this is new information relative to when the hook existed — the
 hook had its own version of every one of these gaps (see git history on
 this file if you want the details). The difference now is that this
-guardrail is opt-in rather than auto-applied, and it isn't the thing
-actually protecting the cluster. **The read-only kubeconfig is the real
-control**: it's enforced by the cluster's own RBAC, not by string matching,
-so it holds even when every layer in this file is bypassed or simply never
-enabled.
+guardrail is opt-in rather than auto-applied, and it was never intended to
+be the thing actually protecting the cluster. **A read-only kubeconfig is
+the real control** — enforced by the cluster's own RBAC, not by string
+matching, so it would hold even when every layer in this file is bypassed
+or simply never enabled — but that credential isn't in use yet (see
+above). Until it lands, treat kube-tier `kubectl` access as running with
+admin privileges and no automatic guardrail; the settings template above
+is the only thing you can opt into today.

@@ -8,11 +8,12 @@ issues Palette's API doesn't surface directly. There is no automatic hook
 that inspects or blocks these commands — nothing here auto-enforces
 anything.
 
-The real safety boundary is a **read-only kubeconfig**, fetched on-demand
-once triage escalates to the kube-API tier (see [`SKILL.md`](./SKILL.md),
-step K1) — not the admin kubeconfig. Because the credential itself is
-scoped read-only, a command that gets past everything below still can't
-mutate the cluster or read Secrets.
+The intended safety boundary is a **read-only kubeconfig**, fetched
+on-demand once triage escalates to the kube-API tier instead of the admin
+kubeconfig — but that work is still in progress (see [`SKILL.md`](./SKILL.md),
+step K1, being rewritten separately). **Until it lands, kube-tier triage
+currently uses the admin kubeconfig with no automatic enforcement at that
+layer at all.**
 
 [`kubectl-readonly.settings.json`](./kubectl-readonly.settings.json) is an
 **optional, opt-in** permission template on top of that. Merging its
@@ -33,5 +34,7 @@ gaps (a flag placed before the verb, aliases, subshells, kubectl plugins) —
 see the longer writeup at
 [`plugins/palette/skills/diagnose-cluster/KUBECTL_GUARDRAILS.md`](https://github.com/spectrocloud/palette-agent-toolkit/blob/main/plugins/palette/skills/diagnose-cluster/KUBECTL_GUARDRAILS.md)
 for the full "Honest limitation" section. That doc's bottom line applies
-here too: this is defense-in-depth, not a substitute for the read-only
-kubeconfig, which is what actually limits blast radius.
+here too: this is defense-in-depth, not a substitute for a scoped
+credential — and the read-only kubeconfig that's meant to be that
+credential isn't wired up yet, so today there's genuinely nothing
+enforcing this below the settings template above, if you've opted into it.
