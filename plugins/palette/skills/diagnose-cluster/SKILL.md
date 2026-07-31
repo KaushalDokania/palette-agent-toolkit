@@ -58,12 +58,16 @@ K1. **Preflight**
    - Run a bounded reachability probe: `KUBECONFIG=/tmp/palette-diag-<uid> kubectl --request-timeout=10s get ns`.
    - If the probe fails, report that the cluster API is unreachable from here (likely a private/edge cluster without the `spectro-proxy` pack), fall back to the Tier-0 findings from step 6, and stop — do not proceed to K2.
 
-K2. **Read-only enforcement**
-   - All commands in K4 are safe read-only calls: the palette plugin's `PreToolUse` hook (`kubectl-guard`) auto-blocks any mutating or secret-reading `kubectl` invocation before it runs. See [`KUBECTL_GUARDRAILS.md`](./KUBECTL_GUARDRAILS.md) for how that enforcement works. Do not attempt to work around it.
+K2. **No automatic enforcement — read-only by convention only**
+   - There is no pre-execution hook or any other automatic backstop blocking mutating or secret-reading `kubectl` calls. The intended safety boundary is a **read-only kubeconfig** for the target cluster instead of the admin one — that's not wired up yet (see K1's TODO above, a separate pending task). Today this tier runs on the **admin** kubeconfig with no automatic enforcement at all.
+   - See [`KUBECTL_GUARDRAILS.md`](./KUBECTL_GUARDRAILS.md) for the full picture, including the optional (opt-in, not auto-applied) permission-template layer.
+   - The commands in K4 must still be *chosen* to be read-only by convention/discipline before running them — there's no backstop catching a mistake.
 
-K3. **Route on `cloud_type`** (captured in step 1)
-   - Infra / self-managed (`aws`, `azure`, `gcp`) → **Protocol A**.
-   - Managed node pools (`eks`, `aks`) → **Protocol B**.
+K3. **Route on managed vs. self-managed control plane** (`cloud_type` captured in step 1)
+   - Managed node pools — `eks`, `aks`, **`gke`** → **Protocol B**.
+   - Infra / self-managed control plane — `aws`, `azure`, `gcp` **as IaaS** → **Protocol A**. This includes plain `gcp` as a cloud_type: a bare `gcp` cluster (no managed designation) is GCP IaaS and routes to Protocol A. Only `gke` specifically is the managed offering and routes to Protocol B — don't conflate the two.
+
+Before running K4's commands for Protocol A, check whether the failure is **pre-pivot** or **post-pivot**: if the first control-plane node never came up, the cluster's CAPI resources still live in the **management-plane/PCG kubeconfig**, not the workload cluster's — K4 run against the workload kubeconfig will look empty. Once the first control-plane node is up, CAPI resources have pivoted into the **workload cluster's own** kubeconfig — the normal case this skill already assumes. If K4's commands return "no resources found" unexpectedly, that's often a sign of pointing at the wrong kubeconfig for the failure phase, not proof the cluster has no CAPI objects at all.
 
 K4. **Protocol A — infra/IaaS clusters** (VERIFIED LIVE — CAPI resources are namespaced under `cluster-<uid>`, so use `-A` to see them regardless of exact namespace)
    ```
@@ -76,7 +80,7 @@ K4. **Protocol A — infra/IaaS clusters** (VERIFIED LIVE — CAPI resources are
    kubectl get pods -A --field-selector=status.phase!=Running       # esp. kube-system, CNI, CAPI controllers
    ```
 
-   **Protocol B — EKS/AKS managed pools** — run ONLY the block matching `cloud_type`; the other provider's CRDs are not installed and will error (`the server doesn't have a resource type ...`).
+   **Protocol B — EKS/AKS/GKE managed pools** — run ONLY the block matching `cloud_type`; the other providers' CRDs are not installed and will error (`the server doesn't have a resource type ...`).
    ```
    kubectl get spc -A
    kubectl get machinepool -A -o wide
@@ -86,7 +90,17 @@ K4. **Protocol A — infra/IaaS clusters** (VERIFIED LIVE — CAPI resources are
    # cloud_type=aks (CAPZ):
    kubectl get azuremanagedcontrolplane,azuremanagedmachinepool -A
    kubectl describe azuremanagedcontrolplane,azuremanagedmachinepool -A
+   # cloud_type=gke (CAPG):
+   kubectl get gcpmanagedcontrolplane,gcpmanagedcluster,gcpmanagedmachinepool -A
+   kubectl describe gcpmanagedcontrolplane,gcpmanagedcluster,gcpmanagedmachinepool -A
    # plus node/pod health as in Protocol A
+   ```
+
+   **Check the CAPI controller-manager's own logs.** For Protocol B, the CR status/conditions above often don't show the actual cloud-API rejection (quota exceeded, IAM/permission denied, bad parameter) — that surfaces in the controller-manager's logs instead. Run the one block matching the routed `cloud_type`:
+   ```
+   kubectl -n capa-system logs deploy/capa-controller-manager --tail=200   # eks
+   kubectl -n capz-system logs deploy/capz-controller-manager --tail=200   # aks
+   kubectl -n capg-system logs deploy/capg-controller-manager --tail=200   # gke
    ```
 
 K5. **Synthesise + wipe**
@@ -105,7 +119,7 @@ K6. **Node-level triage (Protocol A only, SSH)**
      - `kubectl get machine -A -o wide` / `kubectl get nodes -o wide` to find the target node's address.
      - Cluster nodes are typically on private IPs. Get the bastion IP from the `awscluster` resource: `kubectl get awscluster -A -o jsonpath='{.items[*].status.bastion}'` (check `.spec.bastion` too if `.status` is empty).
      - For a private node, SSH via the bastion using ProxyJump: `ssh -i <key> -J <user>@<bastion-ip> <user>@<node-private-ip> "<read-only command>"`.
-   - **Collect logs** (read-only; the `kubectl-guard` `PreToolUse` hook enforces this over SSH the same way it does for `kubectl`):
+   - **Collect logs** (read-only by convention — there is no automatic enforcement over SSH either; nothing blocks a mutating or sensitive-path command from being issued, the operator running this skill is trusted to run only the listed read-only log commands below and not deviate):
      ```
      sudo cloud-init status --long
      sudo cat /var/log/cloud-init-output.log
@@ -113,7 +127,8 @@ K6. **Node-level triage (Protocol A only, SSH)**
      sudo journalctl -u kubelet --no-pager | tail -n 200
      sudo journalctl -u containerd --no-pager | tail -n 200
      ```
-   - **Guardrail note:** the hook denies any non-read-only command or read of a sensitive path (SSH/kube-PKI/cloud-credential files, `/etc/shadow`, etc.) issued over SSH — only the log reads above go through. Do not attempt to work around it.
+   - **Lower-risk first attempt:** the mgmt-plane log bundle (`spectro_logs.zip`, downloadable from the Palette UI) may already contain the same cloud-init logs without needing SSH at all — worth checking before reaching for SSH access.
+   - **No guardrail note:** as with K2/K4, there is no hook or other backstop denying non-read-only commands or reads of sensitive paths (SSH/kube-PKI/cloud-credential files, `/etc/shadow`, etc.) issued over SSH. The commands above are read-only because they're the only ones this step lists — not because anything would stop a different command.
    - Fold node-level findings into the Blockers/Warnings/Info synthesis, then return to step 7.
 
 7. **Ask if user wants to act**
