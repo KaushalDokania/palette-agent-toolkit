@@ -102,10 +102,10 @@ Run `/reload-plugins` after installing to activate it in your current session.
 | `access-review` | `/palette:access-review [name]` | Who's on which team, who's pending activation, any orphaned accounts |
 
 `diagnose-cluster` can additionally run read-only `kubectl` against a
-customer cluster. The intended safety boundary there is a read-only
-kubeconfig fetched on-demand for that tier instead of the admin one — that
-work is still in progress, so today this tier uses the admin kubeconfig
-with no automatic enforcement. An optional, opt-in
+customer cluster. The real safety boundary there is a read-only kubeconfig,
+minted per-session by a bundled script and backed by genuine cluster RBAC —
+the admin kubeconfig is fetched only transiently to bootstrap it, never used
+for the kube-API commands themselves. An optional, opt-in
 `kubectl-readonly.settings.json` permission template is also included; it
 only takes effect if you merge it into your own `.claude/settings.json`. See
 [KUBECTL_GUARDRAILS.md](skills/diagnose-cluster/KUBECTL_GUARDRAILS.md) for

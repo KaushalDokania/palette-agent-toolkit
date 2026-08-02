@@ -19,20 +19,38 @@ tool name, not on which skill is active — it fired on *every* `Bash` call in
 repo that automatically inspects or blocks `kubectl` commands before they
 run.
 
-## The intended safety boundary: a read-only kubeconfig (not yet wired up)
+## The real safety boundary: a read-only kubeconfig, minted per session
 
-The plan is for kube-tier triage to fetch a **read-only kubeconfig** for the
-target cluster instead of the admin one, so that even a command that slips
-past every guardrail below still can't mutate the cluster or read
-Secrets — the credential itself wouldn't permit it. That work is in
-progress; see [`SKILL.md`](./SKILL.md)'s K1 step, which is being rewritten
-separately to fetch and use it.
+Kube-tier triage fetches the **admin kubeconfig only transiently**, in
+[`SKILL.md`](./SKILL.md)'s K1 step, purely to bootstrap a session-scoped
+**read-only** credential via the bundled
+[`generate_ro_kubeconfig.sh`](./scripts/generate_ro_kubeconfig.sh). From K3
+onward, every `kubectl` command runs against that minted RO kubeconfig
+instead — the admin kubeconfig is never touched again, and K1 locks it down
+(`chmod 600`) and wipes it (K5) for the short window it does exist.
 
-**Until that lands, be aware kube-tier triage currently uses the admin
-kubeconfig, with no automatic enforcement at that layer at all** — the
-only thing standing between a stray command and the cluster right now is
-whatever's below in this file, which (see "Honest limitation") is not a
-real substitute for a scoped credential.
+The RO credential's ServiceAccount is bound to the built-in `view`
+ClusterRole (which excludes Secrets by design) plus a narrow supplemental
+ClusterRole scoped to exactly the CAPI/Palette resources the kube-tier reads:
+`cluster.x-k8s.io`/`infrastructure.cluster.x-k8s.io` (full read), the
+specific control-plane kinds under `controlplane.cluster.x-k8s.io`
+(`kubeadmcontrolplanes`, `awsmanagedcontrolplanes`, `rosacontrolplanes`),
+`spectroclusters` only under `cluster.spectrocloud.com` (not `packs` or
+`clusterprofiles`, which can carry secret-shaped fields), and an explicit
+`nodes`/`nodes/status` rule under the core API group — deliberately never a
+wildcard on the core group, since that's where Secrets live. The bearer
+token itself is minted via the TokenRequest API (`kubectl create token
+--duration=1h`), so it self-expires and is never written to a persistent
+Secret object. Session-unique ServiceAccount/binding names (suffixed with
+the cluster UID and a session ID) mean two engineers diagnosing different
+clusters — or the same one — concurrently don't collide or revoke each
+other's credential, and `--cleanup` (wired into K5/K6's exit paths) tears
+the ServiceAccount and bindings back down at the end of a session.
+
+This means **the RO kubeconfig is a real, server-side-enforced boundary now,
+not a convention**: a mutating or Secret-reading command run against it is
+rejected by the cluster's own RBAC with `Forbidden`, regardless of anything
+below in this file.
 
 ## Optional layer: `kubectl-readonly.settings.json`
 
@@ -109,13 +127,22 @@ None of this is new information relative to when the hook existed — the
 hook had its own version of every one of these gaps (see git history on
 this file if you want the details). The difference now is that this
 guardrail is opt-in rather than auto-applied, and it was never intended to
-be the thing actually protecting the cluster. **A read-only kubeconfig is
-the real control** — enforced by the cluster's own RBAC, not by string
-matching, so it would hold even when every layer in this file is bypassed
-or simply never enabled — but that credential isn't in use yet (see
-above). Until it lands, treat kube-tier `kubectl` access as running with
-admin privileges and no automatic guardrail; the settings template above
-is the only thing you can opt into today. Given all that, don't try to
-compensate by running this skill in an auto-approve/YOLO mode — see
+be the thing actually protecting the cluster. **The read-only kubeconfig
+is the real control** — enforced by the cluster's own RBAC, not by string
+matching, so it holds even when every layer in this file is bypassed or
+simply never enabled.
+
+That RBAC scoping has one accepted residual risk of its own, carried
+forward from the script's own review history: the supplemental role grants
+read access to `kubeadmcontrolplanes` (which the kube-tier genuinely
+needs), and that CRD embeds its `KubeadmConfigSpec` inline —
+`spec.files[].content` and `spec.users[].passwd` — so a legitimate read of
+a `kubeadmcontrolplane` object can also surface embedded bootstrap file
+contents or credentials if a given cluster's spec happens to populate
+them. RBAC scopes access to a resource, it can't strip a sub-object out of
+it, so this can't be closed without also blocking the `kubeadmcontrolplane`
+reads the kube-tier depends on. Given all that — this is defense-in-depth,
+not a claim that kube-tier access is airtight — don't try to compensate by
+running this skill in an auto-approve/YOLO mode — see
 [Running generated commands safely](../../README.md#running-generated-commands-safely)
 in the plugin README.
