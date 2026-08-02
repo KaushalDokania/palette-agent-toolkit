@@ -68,7 +68,7 @@ set -o pipefail
 #           file-path-only CA reference (no embedded certificate-authority-data
 #           in the active context) fails loudly instead of surfacing later as
 #           an opaque TLS error.
-#   [TODO — skill step] wipe/`chmod 600` the ADMIN kubeconfig after use.
+#   [DONE — skill step, K1] wipe/`chmod 600` the ADMIN kubeconfig after use.
 # ============================================================================
 
 # Cleanup mode: `generate_ro_kubeconfig.sh --cleanup <sa> <ns>` removes everything
