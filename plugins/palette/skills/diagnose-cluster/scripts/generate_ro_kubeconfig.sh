@@ -199,11 +199,9 @@ create_read_only_cluster_role() {
 # --api-group=cluster.spectrocloud.com` — short name `spc`), not
 # resources:["*"]. That group also contains `packs`, whose `values` blob can
 # carry a pack-author-supplied `oidc-client-secret`-labeled field — and
-# K4's planned read-set only ever runs `kubectl get spc -A` (SKILL-CHANGE-PLAN.md,
-# TESTING-LOG.md — this rework has no SKILL.md/KUBECTL_GUARDRAILS.md/
-# kubectl-readonly.settings.json yet, those get written in the separate
-# skill-wiring follow-up task; the shipped diagnose-cluster/SKILL.md today
-# uses Palette MCP tools only, no kubectl at all), never touches `packs` or
+# K4's read-set only ever runs `kubectl get spc -A` (SKILL-CHANGE-PLAN.md,
+# TESTING-LOG.md; SKILL.md/KUBECTL_GUARDRAILS.md/kubectl-readonly.settings.json
+# now ship this kube-tier for real, K1-K6), never touches `packs` or
 # `clusterprofiles`, so there's no reason to grant them.
 #
 # Only 3 CAPI groups stay resources:["*"]: cluster.x-k8s.io,
