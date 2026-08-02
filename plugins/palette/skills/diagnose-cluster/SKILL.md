@@ -55,8 +55,11 @@ Only reached when step 6 escalates. This tier reads the target cluster's own kub
 K1. **Preflight**
    - Ensure `kubectl` is available in this session.
    - Fetch the admin kubeconfig via the `read_cluster_kubeconfig` MCP tool with `mode=admin`, `write_path=/tmp/palette-diag-<uid>` (substitute the real cluster UID).
-   - Run a bounded reachability probe: `KUBECONFIG=/tmp/palette-diag-<uid> kubectl --request-timeout=10s get ns`.
-   - If the probe fails, report that the cluster API is unreachable from here (likely a private/edge cluster without the `spectro-proxy` pack), fall back to the Tier-0 findings from step 6, and stop — do not proceed to K2.
+   - **Check the fetch result before probing.** Look for a `written_to` field:
+     - Present → the file was actually written; proceed to the reachability probe below using that path (matches `write_path` when the write succeeded).
+     - Absent → the kubeconfig was **not** written to disk (check `warnings` — typically the MCP server needs `--allow-write`). Report that the kubeconfig could not be written locally and the kube-tier reachability probe can't run — do **not** run the probe against a path that was never created, and do **not** conclude or imply the cluster itself is unreachable. Fall back to the Tier-0 findings from step 6 and stop — do not proceed to K2.
+   - Run a bounded reachability probe (only once `written_to` confirms the file exists): `KUBECONFIG=/tmp/palette-diag-<uid> kubectl --request-timeout=10s get ns`.
+   - If *this* probe fails, report that the cluster API is unreachable from here (likely a private/edge cluster without the `spectro-proxy` pack), fall back to the Tier-0 findings from step 6, and stop — do not proceed to K2.
 
 K2. **No automatic enforcement — read-only by convention only**
    - There is no pre-execution hook or any other automatic backstop blocking mutating or secret-reading `kubectl` calls. The intended safety boundary is a **read-only kubeconfig** for the target cluster instead of the admin one — that's not wired up yet. Today this tier runs on the **admin** kubeconfig with no automatic enforcement at all.
