@@ -50,7 +50,7 @@ Perform a structured triage of a Palette cloud cluster. Argument: `$ARGUMENTS` (
 
 ## Kube-level triage (escalation)
 
-Only reached when step 6 escalates. This tier reads the target cluster's own kube API directly (not just the management plane) to see CAPI/node/pod state. v1 is allowlist-only: it uses the **admin** kubeconfig as-is — there is no read-only credential minting and no write path to the customer cluster. Safety comes entirely from the read-only enforcement in K2.
+Only reached when step 6 escalates. This tier reads the target cluster's own kube API directly (not just the management plane) to see CAPI/node/pod state. The admin kubeconfig is fetched only **transiently**, in K1, to bootstrap a session-scoped **read-only** credential (via `generate_ro_kubeconfig.sh`) — every kube-tier command from K3 onward runs against that minted RO kubeconfig instead, never the admin one. That RO credential is backed by real cluster RBAC (the built-in `view` ClusterRole plus a narrow supplemental read-only role — see the script), enforced server-side by the target cluster itself. This is now an actual boundary, not a convention.
 
 K1. **Preflight**
    - Ensure `kubectl` is available in this session.
@@ -60,13 +60,18 @@ K1. **Preflight**
      - Absent → the kubeconfig was **not** written to disk (check `warnings` — typically the MCP server needs `--allow-write`). Report that the kubeconfig could not be written locally and the kube-tier reachability probe can't run — do **not** run the probe against a path that was never created, and do **not** conclude or imply the cluster itself is unreachable. Fall back to the Tier-0 findings from step 6 and stop — do not proceed to K2.
    - Run a bounded reachability probe (only once `written_to` confirms the file exists): `KUBECONFIG=/tmp/palette-diag-<uid> kubectl --request-timeout=10s get ns`.
    - If *this* probe fails, report that the cluster API is unreachable from here (likely a private/edge cluster without the `spectro-proxy` pack), fall back to the Tier-0 findings from step 6, and stop — do not proceed to K2.
+   - **Mint a read-only kubeconfig for all further commands.** With `KUBECONFIG=/tmp/palette-diag-<uid>` active (the admin kubeconfig, confirmed reachable above), run:
+     `bash ${CLAUDE_PLUGIN_ROOT}/skills/diagnose-cluster/scripts/generate_ro_kubeconfig.sh diagnose-cluster-ro-<uid> default` (substitute the real cluster UID for `<uid>`; `default` is used as the namespace since it exists on every cluster — only the ClusterRole/ClusterRoleBinding, which are cluster-scoped, actually matter for access control).
+   - Capture the `RO_KUBECONFIG=<path>` line from the script's output — **this is the kubeconfig every command from K3 onward must use.** Discard the admin kubeconfig conceptually at this point: do not re-fetch `mode=admin` again later in this session for any reason. If more access than the RO role grants turns out to be needed, that is a signal to stop and report the gap — not a reason to escalate back to admin.
+   - If the script itself fails (RBAC bootstrap error, `kubectl create token` failure, etc.) — including a **partial** failure where the ServiceAccount/ClusterRole/ClusterRoleBinding got created but a later step (e.g. the token request) didn't: run `bash ${CLAUDE_PLUGIN_ROOT}/skills/diagnose-cluster/scripts/generate_ro_kubeconfig.sh --cleanup diagnose-cluster-ro-<uid> default` first to remove whatever was left on the cluster (`--cleanup` is idempotent/`--ignore-not-found` on every delete, so it's safe to call regardless of how far the script got — no need to work out exactly what succeeded). Then report that the read-only credential could not be minted, fall back to the Tier-0 findings from step 6, and stop — do not fall back to using the admin kubeconfig for K3-K6 commands as a workaround.
 
-K2. **No automatic enforcement — read-only by convention only**
-   - There is no pre-execution hook or any other automatic backstop blocking mutating or secret-reading `kubectl` calls. The intended safety boundary is a **read-only kubeconfig** for the target cluster instead of the admin one — that's not wired up yet. Today this tier runs on the **admin** kubeconfig with no automatic enforcement at all.
-   - See [`KUBECTL_GUARDRAILS.md`](./KUBECTL_GUARDRAILS.md) for the full picture, including the optional (opt-in, not auto-applied) permission-template layer.
-   - The commands in K4 must still be *chosen* to be read-only by convention/discipline before running them — there's no backstop catching a mistake.
+K2. **Read-only enforcement now comes from real cluster RBAC, not convention**
+   - There is still no Claude-Code-level pre-execution hook — nothing inspects or blocks a `kubectl` command before it runs. But K3/K4 now run against the **RO kubeconfig minted in K1**, whose service account is bound only to the built-in `view` ClusterRole plus a narrow supplemental read-only ClusterRole (see `scripts/generate_ro_kubeconfig.sh`). A mutating or Secret-reading command issued against that credential is rejected **server-side** (`Forbidden`) by the cluster's own RBAC — a real boundary, not just discipline.
+   - See [`KUBECTL_GUARDRAILS.md`](./KUBECTL_GUARDRAILS.md) for the full picture, including the optional (opt-in, not auto-applied) Claude-Code permission-template layer on top of this.
+   - This RBAC boundary covers the kube-API calls in K3/K4. It does **not** extend to K6 (SSH onto a node) — there is still no automatic enforcement over SSH; those commands remain read-only by convention/discipline only.
 
 K3. **Route on managed vs. self-managed control plane** (`cloud_type` captured in step 1)
+   - **Every `kubectl` command from here through K4 and K6 runs with `KUBECONFIG=<RO_KUBECONFIG path captured in K1>` active — never the admin kubeconfig.**
    - Managed node pools — `eks`, `aks`, **`gke`** → **Protocol B**.
    - Infra / self-managed control plane — `aws`, `azure`, `gcp` **as IaaS** → **Protocol A**. This includes plain `gcp` as a cloud_type: a bare `gcp` cluster (no managed designation) is GCP IaaS and routes to Protocol A. Only `gke` specifically is the managed offering and routes to Protocol B — don't conflate the two.
 
@@ -131,7 +136,7 @@ K6. **Node-level triage (Protocol A only, SSH)**
      sudo journalctl -u containerd --no-pager | tail -n 200
      ```
    - **Lower-risk first attempt:** the mgmt-plane log bundle (`spectro_logs.zip`, downloadable from the Palette UI) may already contain the same cloud-init logs without needing SSH at all — worth checking before reaching for SSH access.
-   - **No guardrail note:** as with K2/K4, there is no hook or other backstop denying non-read-only commands or reads of sensitive paths (SSH/kube-PKI/cloud-credential files, `/etc/shadow`, etc.) issued over SSH. The commands above are read-only because they're the only ones this step lists — not because anything would stop a different command.
+   - **No guardrail note:** unlike K3/K4's kube-API calls (backed by the RO kubeconfig's real RBAC), there is no hook, RBAC, or other backstop denying non-read-only commands or reads of sensitive paths (SSH/kube-PKI/cloud-credential files, `/etc/shadow`, etc.) issued over SSH. The commands above are read-only because they're the only ones this step lists — not because anything would stop a different command. The `kubectl get machine`/`kubectl get awscluster` calls just above (to resolve the node/bastion address) do run against the RO kubeconfig from K1, same as K4.
    - Fold node-level findings into the Blockers/Warnings/Info synthesis, then return to step 7.
 
 7. **Ask if user wants to act**
