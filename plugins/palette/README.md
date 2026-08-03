@@ -120,10 +120,12 @@ them silently. Review and approve each one yourself before it executes.
 enabled** — Claude Code's `--dangerously-skip-permissions` flag, or a
 project `permissions` config that auto-allows everything. The `PreToolUse`
 hook that used to auto-block dangerous `kubectl`/`ssh` commands has been
-removed (see [KUBECTL_GUARDRAILS.md](skills/diagnose-cluster/KUBECTL_GUARDRAILS.md)),
-so there is currently no automatic backstop of any kind. Your review of
-each proposed command, before it runs, is the only thing standing between a
-mistaken command and a real cluster.
+removed (see [KUBECTL_GUARDRAILS.md](skills/diagnose-cluster/KUBECTL_GUARDRAILS.md)).
+Read-only `kubectl` in the kube tier is still enforced server-side by cluster
+RBAC (via the minted read-only credential), but that is the only automatic
+backstop — `ssh` commands and anything run outside that credential rely on
+your review. Reviewing each proposed command before it runs is what stands
+between a mistaken command and a real cluster.
 
 See [Configure permissions](https://code.claude.com/docs/en/permissions)
 for how Claude Code's approval flow and `/permissions` command work.

@@ -6,13 +6,12 @@ set -o pipefail
 [[ -n "${DEBUG:-}" ]] && set -x
 
 # ============================================================================
-# COUNCIL REVIEW 2026-07-30 — REQUIRED CHANGES BEFORE PRODUCTION USE
-# This script is DEFENSE-IN-DEPTH, not the primary guardrail (that's a Claude
-# Code Bash allowlist). Do NOT ship it as the safety mechanism until:
-#   [DONE]  session-unique ClusterRoleBinding names (was a shared name that
+# Read-only kubeconfig scoping rationale. Read-only access is enforced
+# server-side by the RBAC set up below. Key properties:
+#   -  session-unique ClusterRoleBinding names (was a shared name that
 #           silently revoked prior sessions on re-run)
-#   [DONE]  teardown mode (`--cleanup <sa> <ns>`) to delete the objects created
-#   [DONE — live-verified 2026-08-02 on aws-test-jul7] scope the role OFF
+#   -  teardown mode (`--cleanup <sa> <ns>`) to delete the objects created
+#   - scope the role OFF
 #           Secrets. Old role granted get/list/watch on */* → could read every
 #           Secret cluster-wide. Now: SA is bound to built-in `view` (excludes
 #           secrets by design) PLUS a supplemental ClusterRole scoped only to
@@ -27,7 +26,7 @@ set -o pipefail
 #           excludes cluster-scoped core resources (same reason it excludes
 #           Secrets), so `kubectl get nodes` was Forbidden even with `view` +
 #           the CRD-groups role. diagnose-cluster's kube tier needs
-#           `kubectl get nodes` (PAI-412-DESIGN.md node-tier triage), so the
+#           `kubectl get nodes` (node-tier triage), so the
 #           supplemental role now also grants get/list/watch on the explicit
 #           resource names `nodes`/`nodes/status` under apiGroup "" — never a
 #           `resources:["*"]` wildcard on the core group, since that's where
@@ -37,9 +36,7 @@ set -o pipefail
 #           re-verified live: `resources:["*"]` under `cluster.spectrocloud.com`
 #           also exposed `packs` (pack `values` blobs can carry a pack-author
 #           `oidc-client-secret`-labeled field) and `clusterprofiles`, neither
-#           of which K4 ever reads (the planned K4 read-set — no SKILL.md
-#           exists yet for this rework; see SKILL-CHANGE-PLAN.md,
-#           TESTING-LOG.md — only runs `kubectl get spc -A`).
+#           of which K4 ever reads (K4's read set only runs `kubectl get spc -A`).
 #           Narrowed to its own rule, resources:["spectroclusters"] only
 #           (confirmed exact name via `kubectl api-resources
 #           --api-group=cluster.spectrocloud.com`). Re-verified: `kubectl get
@@ -57,18 +54,18 @@ set -o pipefail
 #           strip a sub-object. Re-verified: `kubectl get spc/machines/nodes`
 #           still work, secrets/packs/bootstrap-group/addons-group all
 #           Forbidden, no regressions.
-#   [DONE — live-verified 2026-08-02 on aws-test-jul7] switched to
+#   - switched to
 #           `kubectl create token <sa> --duration=1h` (TokenRequest API,
 #           self-expiring, no persistent Secret object) instead of the old
 #           permanent `kubernetes.io/service-account-token` Secret.
-#   [DONE — live-verified 2026-08-02] session-scoped the CA cert file
+#   - session-scoped the CA cert file
 #           (was a fixed /tmp/kube/ca.crt shared across all runs — two
 #           concurrent sessions against different clusters would race on it)
 #           and added a non-empty check right after extraction so a
 #           file-path-only CA reference (no embedded certificate-authority-data
 #           in the active context) fails loudly instead of surfacing later as
 #           an opaque TLS error.
-#   [DONE — skill step, K1] wipe/`chmod 600` the ADMIN kubeconfig after use.
+#   - wipe/`chmod 600` the ADMIN kubeconfig after use.
 # ============================================================================
 
 # Cleanup mode: `generate_ro_kubeconfig.sh --cleanup <sa> <ns>` removes everything
@@ -188,9 +185,9 @@ create_read_only_cluster_role() {
 #
 # `view` deliberately excludes cluster-scoped core resources (Nodes,
 # PersistentVolumes, Namespaces list) by k8s design — live-verified on
-# aws-test-jul7: `kubectl get nodes` was Forbidden under `view` alone.
+# a test cluster: `kubectl get nodes` was Forbidden under `view` alone.
 # diagnose-cluster's kube tier reads `kubectl get nodes` directly
-# (PAI-412-DESIGN.md, node-tier triage), so Nodes are granted here too — as
+# (node-tier triage), so Nodes are granted here too — as
 # an explicit named resource, not a core-group wildcard, since core also
 # holds Secrets.
 #
@@ -199,19 +196,16 @@ create_read_only_cluster_role() {
 # --api-group=cluster.spectrocloud.com` — short name `spc`), not
 # resources:["*"]. That group also contains `packs`, whose `values` blob can
 # carry a pack-author-supplied `oidc-client-secret`-labeled field — and
-# K4's read-set only ever runs `kubectl get spc -A` (SKILL-CHANGE-PLAN.md,
-# TESTING-LOG.md; SKILL.md/KUBECTL_GUARDRAILS.md/kubectl-readonly.settings.json
-# now ship this kube-tier for real, K1-K6), never touches `packs` or
+# K4's read-set only ever runs `kubectl get spc -A` (the kube tier's read set), never touches `packs` or
 # `clusterprofiles`, so there's no reason to grant them.
 #
 # Only 3 CAPI groups stay resources:["*"]: cluster.x-k8s.io,
 # infrastructure.cluster.x-k8s.io, controlplane.cluster.x-k8s.io. The CRD
 # kinds under them (cluster, machinedeployment, machine, kubeadmcontrolplane,
-# awscluster, awsmachine) ARE what K4 reads (live-tested, TESTING-LOG.md).
-# Full audit of every kind in all 3 groups on aws-test-jul7 (`kubectl explain
+# awscluster, awsmachine) ARE what K4 reads (live-tested).
+# Full audit of every kind in all 3 groups on a test cluster (`kubectl explain
 # <kind>.spec --recursive` for all 21 kinds returned by `kubectl api-resources
-# --api-group=<group>`, done 2026-08-02 after this bug class recurred 3
-# rounds running): every secret-shaped field found is a reference pointer,
+# --api-group=<group>`, after this bug class recurred repeatedly): every secret-shaped field found is a reference pointer,
 # not an embedded value — Machine/MachineSet/MachineDeployment/MachinePool's
 # `bootstrap.dataSecretName` (a Secret name, not its contents),
 # AWSClusterStaticIdentity's `secretRef` (name only, holds
@@ -227,10 +221,7 @@ create_read_only_cluster_role() {
 # of that same object).
 # `bootstrap.cluster.x-k8s.io` (KubeadmConfig/KubeadmConfigTemplate) and
 # `addons.cluster.x-k8s.io` (ClusterResourceSet/ClusterResourceSetBinding)
-# were dropped from the wildcard list: K4 never reads either group (grep
-# confirms zero references in this project's own design/test docs — the only
-# "KubeadmConfig" mention is an unimplemented "polish" idea in a meeting
-# brief, not something K4 currently reads). Same bug class as the
+# were dropped from the wildcard list: K4 never reads either group (the kube tier never reads either group). Same bug class as the
 # packs/oidc-client-secret finding: an unused group happens to carry
 # secret-shaped fields. `KubeadmConfigSpec` has `spec.files[].content`
 # (arbitrary inline plaintext — commonly TLS material, registry auth, or
@@ -258,14 +249,14 @@ create_read_only_cluster_role() {
 # same `files[].content`/`users[].passwd` fields, plus
 # `bootstrapTokens[].token`/`tlsBootstrapToken` — and RBAC has no
 # field-level granularity to strip just that sub-object. Accepted as-is.
-# Live-checked on aws-test-jul7 2026-08-02:
+# Live-checked on a test cluster:
 # `spec.kubeadmConfigSpec.files[]` IS populated — /etc/kubernetes/
 # audit-policy.yaml, /etc/kubernetes/pod-security-standard.yaml,
 # /etc/sysctl.d/90-kubelet.conf. Inspected all three: cluster bootstrap
 # config (audit policy, pod-security admission config, sysctl tuning), not
 # credential material, on this cluster. `users[]` is empty/absent here. So
 # this is a live, populated field, just not one holding a secret on
-# aws-test-jul7 today — a differently-configured cluster (or a future
+# a test cluster today — a differently-configured cluster (or a future
 # kubeadm config change on this one) could put real credentials in
 # `files[].content` or `users[].passwd`, and this RBAC grant would expose
 # them with no further code change needed. Flagging, not fixing — there is
